@@ -6,13 +6,14 @@ import trajectory.utils as utils
 import trajectory.datasets as datasets
 from trajectory.search import (
     beam_plan,
+    our_beam_plan,
     make_prefix,
     extract_actions,
     update_context,
 )
 
 class Parser(utils.Parser):
-    dataset: str = 'halfcheetah-medium-expert-v2'
+    dataset: str = 'maze2d-umaze-v1'
     config: str = 'config.offline'
 
 #######################
@@ -35,8 +36,9 @@ gpt, gpt_epoch = utils.load_model(args.logbase, args.dataset, args.gpt_loadpath,
 ####### dataset #######
 #######################
 
+
 env = datasets.load_environment(args.dataset)
-renderer = utils.make_renderer(args)
+# renderer = utils.make_renderer(args)
 timer = utils.timer.Timer()
 
 discretizer = dataset.discretizer
@@ -70,7 +72,7 @@ for t in range(T):
         prefix = make_prefix(discretizer, context, observation, args.prefix_context)
 
         ## sample sequence from model beginning with `prefix`
-        sequence = beam_plan(
+        sequence = our_beam_plan(
             gpt, value_fn, prefix,
             args.horizon, args.beam_width, args.n_expand, observation_dim, action_dim,
             discount, args.max_context_transitions, verbose=args.verbose,
@@ -103,17 +105,17 @@ for t in range(T):
     )
 
     ## visualization
-    if t % args.vis_freq == 0 or terminal or t == T:
+    # if t % args.vis_freq == 0 or terminal or t == T:
 
-        ## save current plan
-        renderer.render_plan(join(args.savepath, f'{t}_plan.mp4'), sequence_recon, env.state_vector())
+    #     ## save current plan
+    #     renderer.render_plan(join(args.savepath, f'{t}_plan.mp4'), sequence_recon, env.state_vector())
 
-        ## save rollout thus far
-        renderer.render_rollout(join(args.savepath, f'rollout.mp4'), rollout, fps=80)
+    #     ## save rollout thus far
+    #     renderer.render_rollout(join(args.savepath, f'rollout.mp4'), rollout, fps=80)
 
-    if terminal: break
+    # if terminal: break
 
-    observation = next_observation
+    # observation = next_observation
 
 ## save result as a json file
 json_path = join(args.savepath, 'rollout.json')
