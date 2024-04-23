@@ -27,6 +27,8 @@ def get_latest_epoch(loadpath):
     states = glob.glob1(loadpath, 'state_*')
     latest_epoch = -1
     for state in states:
+        if "Zone" in state:
+            continue
         epoch = int(state.replace('state_', '').replace('.pt', ''))
         latest_epoch = max(epoch, latest_epoch)
     return latest_epoch

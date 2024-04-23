@@ -26,6 +26,16 @@ def extract_actions(x, observation_dim, action_dim, t=None):
     else:
         return actions
 
+
+def q_function_guided_action(x, observation_dim, action_dim, qmodel, t=None):
+    assert x.shape[1] == observation_dim + action_dim + 2
+    x = torch.tensor(x)
+    obs = x[:, :observation_dim].float().cuda()
+    act = x[:, observation_dim:observation_dim+action_dim].float().cuda()
+    q_vals = qmodel.qf(obs, act)
+    action = act[q_vals.argmax()].cpu().numpy()
+    return action
+
 def update_context(context, discretizer, observation, action, reward, max_context_transitions):
     '''
         context : list of transitions

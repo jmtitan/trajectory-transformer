@@ -102,6 +102,24 @@ class QuantileDiscretizer:
 		right = np.take_along_axis(thresholds, indices + 1, axis=0)
 		recon = (left + right) / 2.
 		return recon
+	
+	def reconstruct_torch(self, indices, subslice=(None, None)):
+
+		## enforce batch mode
+		if indices.ndim == 1:
+			indices = indices[None]
+
+		if indices.min() < 0 or indices.max() >= self.N:
+			print(f'[ utils/discretization ] indices out of range: ({indices.min()}, {indices.max()}) | N: {self.N}')
+			indices = torch.clip(indices, 0, self.N - 1)
+
+		start, end = subslice
+		thresholds = to_torch(self.thresholds[:, start:end])
+
+		left = torch.take_along_dim(thresholds, indices, axis=0)
+		right = torch.take_along_dim(thresholds, indices + 1, axis=0)
+		recon = (left + right) / 2.
+		return recon
 
 	#---------------------------- wrappers for planning ----------------------------#
 

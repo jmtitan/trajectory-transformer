@@ -76,7 +76,7 @@ def forward(model, x, max_block=None, allow_crop=True, crop_increment=None, **kw
 
     return logits
 
-def get_logp(model, x, temperature=1.0, topk=None, cdf=None, **forward_kwargs):
+def sample_p(model, x, temperature=1.0, topk=None, cdf=None, **forward_kwargs):
     '''
         x : tensor[ batch_size x sequence_length ]
     '''
@@ -96,9 +96,14 @@ def get_logp(model, x, temperature=1.0, topk=None, cdf=None, **forward_kwargs):
         logits = top_k_logits(logits, topk)
 
     ## apply softmax to convert to probabilities
-    logp = logits.log_softmax(dim=-1)
+    # logp = logits.log_softmax(dim=-1)
+    ## apply softmax to convert to probabilities
+    probs = logits.softmax(dim=-1)
 
-    return logp
+    ## sample from the distribution
+    ## [ batch_size x 1 ]
+    indices = torch.multinomial(probs, num_samples=1)
+    return indices, probs
 
 #-------------------------------- sampling --------------------------------#
 
@@ -145,6 +150,25 @@ def sample_n(model, x, N, **sample_kwargs):
 
     for n in range(N):
         indices, p = sample(model, x, **sample_kwargs)
+
+        ## append to the sequence and continue
+        ## [ batch_size x (sequence_length + n) ]
+        x = torch.cat((x, indices), dim=1)
+
+        probs[:, n] = p
+
+    return x, probs
+
+@torch.no_grad()
+def sample_n_topp(model, x, N, **sample_kwargs):
+    batch_size = len(x)
+
+    ## keep track of probabilities from each step;
+    ## `vocab_size + 1` accounts for termination token
+    probs = torch.zeros(batch_size, N, model.vocab_size + 1, device=x.device)
+
+    for n in range(N):
+        indices, p = sample_p(model, x, **sample_kwargs)
 
         ## append to the sequence and continue
         ## [ batch_size x (sequence_length + n) ]

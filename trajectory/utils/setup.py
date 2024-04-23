@@ -37,7 +37,7 @@ class Parser(Tap):
     def save(self):
         fullpath = os.path.join(self.savepath, 'args.json')
         print(f'[ utils/setup ] Saved args to {fullpath}')
-        super().save(fullpath, skip_unpicklable=True)
+        #super().save(fullpath, skip_unpicklable=True)
 
     def parse_args(self, experiment=None):
         args = super().parse_args(known_only=True)

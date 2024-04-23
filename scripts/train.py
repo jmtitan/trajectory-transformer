@@ -9,7 +9,7 @@ from trajectory.models.transformers import GPT
 
 
 class Parser(utils.Parser):
-    dataset: str = 'halfcheetah-medium-expert-v2'
+    dataset: str = 'maze2d-umaze-v2'
     config: str = 'config.offline'
 
 #######################
@@ -39,6 +39,7 @@ dataset_config = utils.Config(
 )
 
 dataset = dataset_config()
+
 obs_dim = dataset.observation_dim
 act_dim = dataset.action_dim
 transition_dim = dataset.joined_dim

@@ -3,13 +3,12 @@ __pycache__/
 *.egg-info
 .DS_Store
 bin/
-
+plotting
 logs/*
 data/*
-slurm/config.sh
-slurm/*sandbox*
+doc/*
 *.img
-slurm-*.out
+*.csv
 *.png
 *.pdf
 *.pkl
