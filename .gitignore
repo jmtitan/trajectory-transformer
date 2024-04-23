@@ -3,10 +3,9 @@ __pycache__/
 *.egg-info
 .DS_Store
 bin/
-plotting
+plot/*
 logs/*
 data/*
-doc/*
 *.img
 *.csv
 *.png
