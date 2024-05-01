@@ -9,6 +9,7 @@ from trajectory.search import (
     beam_plan,
     A_star_beam_plan,
     Q_beam_plan,
+    Best_first_beam_plan,
     make_prefix,
     extract_actions,
     update_context,
@@ -22,9 +23,10 @@ beam_function = [
     'BEAM_PLAN',
     'week_MCTS',
     'Q_BEAM_PLAN',
+    'Best_FIRST_BEAM_PLAN',
     'A_STAR_BEAM_PLAN'
 ]
-test_beam = beam_function[1]
+test_beam = beam_function[0]
 
 
 class Parser(utils.Parser):
@@ -57,15 +59,13 @@ preprocess_fn = datasets.get_preprocess_fn(env.name)
 iql_path = './logs/maze2d-umaze-v1/iql-10e6/final.pt'
 iql = load_iql(observation_dim, action_dim, iql_path)
 
-
-
 ### planing
 
 observation = env.reset()
 
 ## manual set starting point
-qpos = np.array([1.5,1.0])
-qvel = np.array([0.000001, -0.000001])
+qpos = np.array([1.9036427614959943,3.056446507881826])
+qvel = np.array([-0.1034511263986435,0.014453362443003024])
 env.set_state(qpos, qvel)
 observation = env.state_vector()
 
@@ -120,6 +120,13 @@ for t in range(T):
             )
         elif test_beam == "A_STAR_BEAM_PLAN":
             sequence = A_star_beam_plan(
+                gpt, iql, discretizer.reconstruct_torch, prefix,
+                args.horizon, args.beam_width, args.n_expand, observation_dim, action_dim,
+                discount, args.max_context_transitions, verbose=args.verbose,
+                k_obs=args.k_obs, k_act=args.k_act, cdf_obs=args.cdf_obs, cdf_act=args.cdf_act,
+            )
+        elif test_beam == "Best_FIRST_BEAM_PLAN":
+            sequence = Best_first_beam_plan(
                 gpt, value_fn, prefix,
                 args.horizon, args.beam_width, args.n_expand, observation_dim, action_dim,
                 discount, args.max_context_transitions, verbose=args.verbose,
@@ -179,4 +186,4 @@ json.dump(json_data, open(json_path, 'w'), indent=2, sort_keys=True)
 
 
 df = pd.DataFrame(rollout, columns=['x','y','vx','vy','goalx','goaly', 'reward', 'score'])
-df.to_csv(join(args.savepath, test_beam + '-rollout.csv'))
+df.to_csv(join(args.savepath, test_beam + '-data.csv'))

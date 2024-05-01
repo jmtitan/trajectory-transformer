@@ -1,96 +1,15 @@
 import numpy as np
 import torch
-import pdb
-import heapq
 from .. import utils
 from .sampling import sample_n, sort_2d, sample,sample_n_topp
 
 REWARD_DIM = VALUE_DIM = 1
 
 
-
-
-def reconstruct(indices, subslice=(None, None)):
-
-    if torch.is_tensor(indices):
-        indices = indices.detach().cpu().numpy()
-
-    ## enforce batch mode
-    if indices.ndim == 1:
-        indices = indices[None]
-
-    if indices.min() < 0 or indices.max() >= self.N:
-        print(f'[ utils/discretization ] indices out of range: ({indices.min()}, {indices.max()}) | N: {self.N}')
-        indices = np.clip(indices, 0, self.N - 1)
-
-    start, end = subslice
-    thresholds = self.thresholds[:, start:end]
-
-    left = np.take_along_axis(thresholds, indices, axis=0)
-    right = np.take_along_axis(thresholds, indices + 1, axis=0)
-    recon = (left + right) / 2.
-    return recon
-
-@torch.no_grad()
-def beam_search(model, x, n_steps, beam_width=512, goal=None, **sample_kwargs):
-    batch_size = len(x)
-
-    prefix_i = torch.arange(len(x), dtype=torch.long, device=x.device)
-    cumulative_logp = torch.zeros(batch_size, 1, device=x.device)
-
-    for t in range(n_steps):
-
-        if goal is not None:
-            goal_rep = goal.repeat(len(x), 1)
-            logp = get_logp(model, x, goal=goal_rep, **sample_kwargs)
-        else:
-            logp = get_logp(model, x, **sample_kwargs)
-
-        candidate_logp = cumulative_logp + logp
-        sorted_logp, sorted_i, sorted_j = sort_2d(candidate_logp)
-
-        n_candidates = (candidate_logp > -np.inf).sum().item()
-        n_retain = min(n_candidates, beam_width)
-        cumulative_logp = sorted_logp[:n_retain].unsqueeze(-1)
-
-        sorted_i = sorted_i[:n_retain]
-        sorted_j = sorted_j[:n_retain].unsqueeze(-1)
-
-        x = torch.cat([x[sorted_i], sorted_j], dim=-1)
-        prefix_i = prefix_i[sorted_i]
-
-    x = x[0]
-    return x, cumulative_logp.squeeze()
-
-
-
-@torch.no_grad()
-def beam_stop(big_Q, n_steps):
-    for q in big_Q:
-        if q.shape[0] < n_steps - 1:
-            return False
-    return  True
-
-def heuristic_f(seq):
-    pass
-
-class HeapItem:
-    # p = ()
-    def __init__(self, p):
-        self.p = p
-
-    def __lt__(self, other): 
-        return self.p < other.p
-    
-    def __len__(self):
-        return len(self.p)
-    
-    def get(self):
-        return self.p
     
 @torch.no_grad()
 def A_star_beam_plan(
-    model, value_fn, x,
+    model, iql,reconstruct_fun,  x,
     n_steps, beam_width, n_expand,
     observation_dim, action_dim,comparison_time,
     discount=0.99, max_context_transitions=None,
@@ -115,42 +34,40 @@ def A_star_beam_plan(
 
 
     ## construct discount tensors for estimating values
-    discounts = discount ** torch.arange(n_steps + 2, device=x.device)
+    discounts = discount ** torch.arange(n_steps + 1, device=x.device)
+    # rewards = torch.zeros(beam_width, n_steps + 1, device=x.device)
 
-    ## init Q, big_Q
-    Q = []
-    big_Q = [] # beam_width * 1
-    heapq.heapify(Q)
-    heapq.heapify(big_Q)
-    
-    heapq.heappush(Q, (HeapItem(torch.tensor(0)), 0, HeapItem(x), HeapItem(torch.zeros(n_steps + 2, device=x.device)))) # 0-15
-    # (scores, times of decision), sequences, rewards
-
-    heapq.heappush(big_Q, (HeapItem(torch.tensor(0)), Q) )
-    # Highest scores,  sequences
-
+    ## init big_Q
+    big_Q = -torch.inf * torch.ones(n_steps+1) # beam_width * 1
+    d = {}
+    t = 0
+    sh_0 = 0 # final score 
+    r_0 = torch.zeros(n_steps + 1, device=x.device)
+    init_heap = {sh_0 : (x, r_0)}
+    big_Q[t] = sh_0
+    d[t] = init_heap
     POPS = {}
 
 
     ## logging
     # progress = utils.Progress(n_steps) if verbose else utils.Silent()
+    progress = utils.Progress(n_steps) if verbose else utils.Silent()
 
-    best_sh = -1e10
-    best_q = []
+    while n_steps not in d.keys():
+        queue_sort = torch.argsort(big_Q)
+        t = int(queue_sort[-1])
+        top_sh = next(iter(d[t]))
+        (seq, rewards) = d[t][top_sh]            # pop out the best seq in t step: d[t]
+        del d[t][top_sh]                           # del the best seq in d[t]
 
-    
-    comparison_counter = 0
 
-    while len(Q) != 0 and not beam_stop(big_Q, n_steps):
-        sh, t, seq, r = heapq.heappop(Q) 
-        sh = -sh.get()
-        seq = seq.get()
-        r = r.get().repeat(n_expand ,1)
+        if len(d[t]) == 0:
+            big_Q[t] = -torch.inf
+        else:
+            best_remaining_sh = next(iter(d[t]))
+            big_Q[t] = best_remaining_sh
 
-        # print("length of seq:", len(seq))
-        # print("times of decision:", t)
-        # print("length of Q:", len(Q))
-
+ 
         ## init POPS
         if t not in POPS:
             POPS[t] = 0
@@ -160,61 +77,82 @@ def A_star_beam_plan(
             continue
         POPS[t] += 1
 
-        ## compare
-        if t == n_steps:
-            comparison_counter += 1
-            if sh > best_sh:
-                best_q = seq
-                best_sh = sh
-        
 
-        ## push new seq 
-        if len(seq) >= len(best_q):
-            seq = seq.repeat(n_expand, 1)
-        else:
-            seq = seq.repeat(1, 1)
-        
+        seq = seq.repeat(beam_width * n_expand, 1)
+        rewards = rewards.repeat(beam_width * n_expand, 1)
+
         # actions
         seq , _ = sample_n(model, seq, action_dim, topk=k_act, cdf=cdf_act, **sample_kwargs)
         # reward
         seq, r_prob = sample_n(model, seq, REWARD_DIM + VALUE_DIM, topk=k_rew, cdf=cdf_rew, **sample_kwargs)
+        
+        gap = observation_dim + action_dim + REWARD_DIM + VALUE_DIM
+
+
+        raw_x =  reconstruct_fun(seq[:, -gap:])
+        obs = raw_x[:, :observation_dim]
+        act = raw_x[:, observation_dim: observation_dim + action_dim]
+        q_vals = iql.qf(obs, act)
+        
+        rewards[:, t] = q_vals
+        sh = (rewards * discounts).sum(dim=-1) 
+        
+
         # observation
         if t < n_steps - 1:
             seq, _ = sample_n(model, seq, observation_dim, topk=k_obs, cdf=cdf_obs, **sample_kwargs)
 
-        ## optionally, use a percentile or mean of the reward and
-        ## value distributions instead of sampled tokens
-        r_t, V_t = value_fn(r_prob)
+        sh, ind = torch.sort(sh, descending=True)
+        rewards = rewards[ind]
+        seq = seq[ind]
 
-        ## update rewards tensor
-        r[:, t] = r_t
-        r[:, t+1] = V_t
-        # print("rewards:", r_t)
+        for i in range(beam_width):
+            if t+1 in d.keys():
+                if sh[i] not in list(d[t+1].keys()): # clear repeated path
+                    d[t+1][sh[i]] = (seq[i], rewards[i])
+            else: #we need toq initialize B_t+1
+                init_heap = {sh[i]: (seq[i], rewards[i])}
+                d[t+1] = init_heap
 
-        ## estimate scores
-        sh = (r * discounts).sum(dim=-1) 
-
-        # + heuristic_f(seq) Q-learning (offline) (IQL CQL)
-
-
-        #divide sh
-        for sh_i, rew_i, seq_i in zip(torch.chunk(sh, n_expand, dim=0), 
-                                      torch.chunk(r, n_expand, dim = 0),
-                                      torch.chunk(seq, n_expand, dim = 0)):
-
-            heapq.heappush(Q, (HeapItem(-sh_i), t+1, HeapItem(seq_i[0]), HeapItem(rew_i[0])))
+        best_sh_t1 = next(iter(d[t+1]))
+        big_Q[t+1] = best_sh_t1
+        # inital version
+        # for sh_i, r_i, seq_i in zip(torch.chunk(sh, beam_width * n_expand, dim=0), 
+        #                        torch.chunk(rewards, beam_width * n_expand, dim = 0),
+        #                         torch.chunk(seq, beam_width * n_expand, dim = 0)):
+        #     sh_i = sh_i[0].item()
+        #     seq_i = seq_i[0]
+        #     r_i = r_i[0]
+        #     if t+1 in d.keys():
+        #         if len(d[t+1]) < beam_width:
+        #             d[t+1].append((sh_i, (seq_i, r_i)))
+        #             d[t+1] = sorted(d[t+1], key=lambda x: x[0])
+        #         else: #We have to check for dominated sequences
+        #             if d[t+1][0][0] < sh_i: #We replace them
+        #                 d[t+1][0] =  (sh_i, (seq_i, r_i))
+        #                 d[t+1] = sorted(d[t+1], key=lambda x: x[0])
+        #     else: #we need toq initialize B_t+1
+        #         init_heap = [(sh_i, (seq_i, r_i))]
+        #         d[t+1] = init_heap
+                
                 ## Q -> (k, )
-        Q = heapq.nsmallest(beam_width, Q)
-
-        ## early stop
-        if comparison_counter >= comparison_time:
-            best_q = best_q.view(-1, transition_dim)
-            best_q = best_q[-n_steps:, :]
-
-            return best_q
         
-        # else:
-        #     return None
+        best_sh_t1 = next(iter(d[t+1]))
+        big_Q[t+1] = best_sh_t1
+
+        progress.update({
+            'x': list(x.shape),
+            'vmin': sh.min(), 'vmax': sh.max(),
+            'qmin': q_vals.min(), 'qmax': q_vals.max(),
+            'discount': discount
+        })
+
+    progress.stamp()
+
+    best_seq = d[n_steps][next(iter(d[n_steps]))][0]
+    best_seq = best_seq.view(-1, transition_dim)
+    return best_seq
+
 
 @torch.no_grad()
 def MCTS(
@@ -362,6 +300,7 @@ def beam_plan(
         ## sample actions
         x, _ = sample_n(model, x, action_dim, topk=k_act, cdf=cdf_act, **sample_kwargs)
 
+        
         ## sample reward and value estimate
         x, r_probs = sample_n(model, x, REWARD_DIM + VALUE_DIM, topk=k_rew, cdf=cdf_rew, **sample_kwargs)
 
@@ -516,6 +455,132 @@ def Q_beam_plan(
     return best_sequence
 
 
+@torch.no_grad()
+def Best_first_beam_plan(
+    model, value_fn,  x,
+    n_steps, beam_width, n_expand,
+    observation_dim, action_dim,comparison_time,
+    discount=0.99, max_context_transitions=None,
+    k_obs=None, k_act=None, k_rew=1,
+    cdf_obs=None, cdf_act=None, cdf_rew=None,
+    verbose=True, previous_actions=None,
+):
+    '''
+        x : tensor[ 1 x input_sequence_length ]
+    '''
 
+
+    # convert max number of transitions to max number of tokens
+    transition_dim = observation_dim + action_dim + REWARD_DIM + VALUE_DIM
+    max_block = max_context_transitions * transition_dim - 1 if max_context_transitions else None
+
+    ## pass in max numer of tokens to sample function
+    sample_kwargs = {
+        'max_block': max_block,
+        'crop_increment': transition_dim,
+    }
+
+
+    ## construct discount tensors for estimating values
+    discounts = discount ** torch.arange(n_steps + 2, device=x.device)
+    # rewards = torch.zeros(beam_width, n_steps + 1, device=x.device)
+
+    ## init big_Q
+    big_Q = -torch.inf * torch.ones(n_steps+1) # beam_width * 1
+    d = {}
+    t = 0
+    sh_0 = 0 # final score 
+    r_0 = torch.zeros(n_steps + 2, device=x.device)
+    init_heap = {sh_0 : (x, r_0)}
+    big_Q[t] = sh_0
+    d[t] = init_heap
+    POPS = {}
+
+
+    ## logging
+    # progress = utils.Progress(n_steps) if verbose else utils.Silent()
+
+    # comparison_counter = 0
+
+    ## logging
+    progress = utils.Progress(n_steps) if verbose else utils.Silent()
+    while n_steps not in d.keys():
+        queue_sort = torch.argsort(big_Q)
+        t = int(queue_sort[-1])
+        top_sh = next(iter(d[t]))
+        (seq, rewards) = d[t][top_sh]            # pop out the best seq in t step: d[t]
+        del d[t][top_sh]                           # del the best seq in d[t]
+
+        if len(d[t]) == 0:
+            big_Q[t] = -torch.inf
+        else:
+            best_remaining_sh = next(iter(d[t]))
+            big_Q[t] = best_remaining_sh
+
+
+        ## init POPS
+        if t not in POPS:
+            POPS[t] = 0
+        
+        ## check beam size beam_width = 128, n_steps = 15
+        if POPS[t] >= beam_width or t > n_steps:
+            continue
+        POPS[t] += 1
+
+
+        seq = seq.repeat(beam_width * n_expand, 1)
+        rewards = rewards.repeat(beam_width * n_expand, 1)
+        # actions
+        seq , _ = sample_n(model, seq, action_dim, topk=k_act, cdf=cdf_act, **sample_kwargs)
+        # reward
+        seq, r_prob = sample_n(model, seq, REWARD_DIM + VALUE_DIM, topk=k_rew, cdf=cdf_rew, **sample_kwargs)
+
+        ## optionally, use a percentile or mean of the reward and
+        ## value distributions instead of sampled tokens
+        r_t, V_t = value_fn(r_prob)
+
+        ## update rewards tensor
+        rewards[:, t] = r_t
+        rewards[:, t+1] = V_t
+        # print("rewards:", r_t)
+
+        ## estimate scores
+        sh = (rewards * discounts).sum(dim=-1) 
+
+        # observation
+        if t < n_steps - 1:
+            seq, _ = sample_n(model, seq, observation_dim, topk=k_obs, cdf=cdf_obs, **sample_kwargs)
+
+        sh, ind = torch.sort(sh, descending=True)
+        rewards = rewards[ind]
+        seq = seq[ind]
+
+        for i in range(beam_width):
+            if t+1 in d.keys():
+                if sh[i] not in list(d[t+1].keys()): # clear repeated path
+                    d[t+1][sh[i]] = (seq[i], rewards[i])
+            else: #we need toq initialize B_t+1
+                init_heap = {sh[i]: (seq[i], rewards[i])}
+                d[t+1] = init_heap
+
+        best_sh_t1 = next(iter(d[t+1]))
+        big_Q[t+1] = best_sh_t1
+        ## logging
+        progress.update({
+            'x': list(x.shape),
+            'vmin': sh.min(), 'vmax': sh.max(),
+            'vtmin': V_t.min(), 'vtmax': V_t.max(),
+            'discount': discount
+        })
+
+    progress.stamp()
+        ## early stop
+        # if comparison_counter >= comparison_time:
+        #     best_q = best_q.view(-1, transition_dim)
+        #     best_q = best_q[-n_steps:, :]
+    
+    best_seq = d[n_steps][next(iter(d[n_steps]))][0]
+    best_seq = best_seq.view(-1, transition_dim)
+    return best_seq
 
 
