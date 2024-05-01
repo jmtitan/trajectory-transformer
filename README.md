@@ -1,6 +1,6 @@
 ## Trajectory Transformer with Advanced Decoding Algorithms.
 
-Implement for different decoding algorithm such as 
+Implement for advanced decoding algorithms:
 - MCTS
 - Best-first Beam search
 - A* Beam search.
